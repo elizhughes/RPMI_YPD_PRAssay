@@ -1,0 +1,246 @@
+---
+title: "RPMI_YPD comnbined PR analysis"
+author: "Liz Hughes"
+date: "23/11/2022"
+output:
+  html_document:
+    toc: yes
+    toc_depth: 2
+  word_document:
+    toc: yes
+    toc_depth: '2'
+  pdf_document:
+    toc: yes
+    toc_depth: '2'
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE , warning=FALSE, message=FALSE)
+```
+
+
+This analysis takes parts from Rmd files RPMI_PR_20200728.Rmd and nYPD_PR_20200807.Rmd to create a combined figure.
+Test WT H99 and Gat 201 deletion mutants 003(Madhani) and 004(Bahn)in RPMI and YPD at 37 degrees in TECAN plate reader.
+7 Bioreps, 3 Techreps each. (NB only 2 Techreps for Biorep 7)
+Grow 5ml culture from colony (1 colony = 1 Biorep)in YPD, 30C, 250 rpm ON.
+Seed at OD 600nm = 0.2 , 200 ul per well.
+Run for 3 days.
+
+```{r load_packages}
+library("reshape2")
+library(dplyr)
+library(ggplot2)
+library(tidyverse)
+library(markdown)
+library(cowplot)
+```
+
+
+# Read in transposed data as csv file RPMI
+
+```{r csv_file}
+
+rawdata <- read.csv("../Input/20200728_EH_PR2_RPMI_WT_Gat201TRSP.csv")
+
+```
+
+# Change time in seconds to time in hours RPMI
+
+```{r mutate_time}
+
+ rawdata_hrs<-mutate(rawdata, Time = Time/86400)
+
+```
+
+# Tidy the data using the melt function from reshape2 RPMI
+
+```{r reshape}
+reshaped <- melt(rawdata_hrs, id=c("Time", "Temp"), 
+                              variable.name="Well",
+                              value.name="OD595")
+
+summary(reshaped)
+```
+
+# Read in the Plate map data from csv file RPMI
+
+```{r Load_platemap}
+
+platemap <- read.csv("../Input/20200728-PR2_SetupCSV.csv")
+head(platemap, n=10)
+
+
+```
+
+# Combine the reshaped data with the plate map, pairing them by Well RPMI
+
+```{r join}
+
+annotated <- inner_join(reshaped, platemap, by="Well")
+ 
+```
+
+## Calculate median OD for blank wells for each growth medium RPMI
+Remove well H2
+
+```{r calc_blank_medians}
+blank_OD_summary <- annotated %>%
+  filter(Strain=="") %>%
+  filter(Well != "H2") %>%
+  # filter out columns 1 and 12 as well?
+  group_by(Medium) %>%
+  summarise(OD_median=median(OD595),
+            OD_mean=mean(OD595),
+            OD_max=max(OD595),
+            OD_min=min(OD595))
+print(blank_OD_summary)
+```
+
+# Subtract blank OD to make corrected OD and Plot OD_corrected v Time (hrs) RPMI
+
+```{r subtract_blank_OD}
+
+normalisedOD <- annotated %>%
+  left_join(blank_OD_summary, by="Medium") %>%
+  mutate(OD_corrected = OD595 - OD_median)
+
+```
+
+## Plot OD all stat_summary(geom -"line") Highlight summary line RPMI
+
+```{r plot_all_stat_summary}
+ggplot(data=normalisedOD %>%
+                     filter(Strain != ""), 
+                      aes(x=Time, y=OD_corrected, color=Strain)) + 
+       geom_line(aes(group = Well), size = 0.2, alpha = 0.2) + 
+       stat_summary(fun = "median", geom = "line", size = 1) +
+       scale_y_continuous(limits=c(0,0.1),expand=c(0,0), breaks = c(0, 0.05, 0.1)) +
+  
+       labs(x = "Number of Days",
+            y = "Absorbance (595nm)",
+            title = "Cell Culture Media") +
+       theme_bw() +
+       theme(text = element_text(size = 15))+
+       theme(axis.title = element_text(size = 25)) +
+  theme(axis.ticks.length = unit(0.3, "cm"))+
+       theme(title = element_text(size = 30))+
+       theme(legend.title = element_text(size = 25))+
+  theme(panel.grid.minor = element_blank())+
+       scale_color_brewer(palette="Set1")
+```
+
+
+# Read in transposed data as csv file YPD
+
+```{r y_csv_file }
+y_rawdata <- read.csv("../Input/20200807_EH_PR4_YPD_WTGat201_TRSP.csv")
+
+```
+
+# Change time in seconds to time in days YPD
+
+```{r y_mutate_time}
+
+ y_rawdata_hrs<-mutate(y_rawdata, Time = Time/86400)
+```
+
+# Tidy the data using the melt function from reshape2 YPD
+
+```{r y_reshape}
+
+y_reshaped <- melt(y_rawdata_hrs, id=c("Time", "Temp"), variable.name="Well",
+                 value.name="OD595")
+summary(y_reshaped)
+```
+
+
+# Read in the Plate map data from csv file YPD
+
+```{r y_Load_platemap}
+y_platemap <- read.csv("../Input/20200807-PR4_SetupCSV.csv")
+head(y_platemap, n=10)
+
+```
+
+# Combine the reshaped data with the plate map, pairing them by Well YPD
+
+```{r y_join}
+y_annotated <- inner_join(y_reshaped, y_platemap, by="Well")
+
+```
+
+## Calculate median OD for blank wells YPD
+Remove A1
+
+```{r y_calc_blank_medians}
+y_blank_OD_summary <- y_annotated %>%
+  filter(Strain=="") %>%
+  group_by(Medium) %>%
+  summarise(OD_median=median(OD595),
+            OD_mean=mean(OD595),
+            OD_max=max(OD595),
+            OD_min=min(OD595))
+print(y_blank_OD_summary)
+```
+
+# Subtract blank OD to make corrected OD YPD
+
+```{r y_subtract_blank_OD}
+
+y_normalisedOD <- y_annotated %>%
+  left_join(y_blank_OD_summary, by="Medium") %>%
+  mutate(y_OD_corrected = OD595 - OD_median)
+
+```
+
+## Plot OD all stat_summary(geom -"line")
+
+```{r y_plot_all_stat_summary}
+ggplot(data=y_normalisedOD %>%
+                     filter(Strain != ""), 
+                      aes(x=Time, y=y_OD_corrected, color=Strain)) + 
+       geom_line(aes(group = Well), size = 0.2, alpha = 0.2) + 
+       stat_summary(fun = "median", geom = "line", size = 1) +
+       scale_y_continuous(limits=c(0,0.9),expand=c(0,0)) +
+       geom_hline(aes(yintercept=0.1), linetype="dashed", colour="black") +
+       labs(x = "Number of Days",
+            y = "Absorbance (595nm)",
+            title = "Rich Culture Media") +
+       theme_bw() +
+       theme(text = element_text(size = 15))+
+       theme(axis.title = element_text(size = 25))+
+       theme(axis.ticks.length = unit(0.3, "cm"))+
+       theme(title = element_text(size = 30))+
+   theme(panel.grid.minor = element_blank())+
+       theme(legend.title = element_text(size = 25))+
+       scale_color_brewer(palette="Set1")
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
