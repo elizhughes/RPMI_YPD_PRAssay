@@ -115,16 +115,17 @@ RPMI_plot <- ggplot(data=normalisedOD %>%
                       aes(x=Time, y=OD_corrected, color=Strain)) + 
        geom_line(aes(group = Well), size = 0.2, alpha = 0.2) + 
        stat_summary(fun = "median", geom = "line", size = 1) +
-       scale_y_continuous(limits=c(0,0.1),expand=c(0,0), breaks = c(0, 0.05, 0.1)) +
+       scale_y_continuous(limits=c(0,0.9),expand=c(0,0), breaks = c(0,  0.25,0.5, 0.75)) +
   
-       labs(x = "Number of Days",
-            y = "Absorbance (595nm)",
-            title = "Cell Culture Media") +
+       labs(y = "Absorbance (595nm)",
+            title = "RPMI") +
        theme_bw() +
+  theme(axis.title.x = element_blank())+
        theme(text = element_text(size = 15))+
        theme(axis.title = element_text(size = 25)) +
   theme(axis.ticks.length = unit(0.3, "cm"))+
-       theme(title = element_text(size = 30))+
+       theme(title = element_text(size = 25))+
+  theme(plot.title = element_text(hjust = 0.5))+
        theme(legend.title = element_blank())+
   theme(legend.position="none")+
   theme(panel.grid.minor = element_blank())+
@@ -212,16 +213,17 @@ YPD_plot <- ggplot(data=y_normalisedOD %>%
        geom_line(aes(group = Well), size = 0.2, alpha = 0.2) + 
        stat_summary(fun = "median", geom = "line", size = 1) +
        scale_y_continuous(limits=c(0,0.9),expand=c(0,0)) +
-       geom_hline(aes(yintercept=0.1), linetype="dashed", colour="black") +
+      
        labs(
-         title = "Rich Culture Media") +
+         title = "YPD") +
        theme_bw() +
        theme(text = element_text(size = 15))+
        theme(axis.title.x = element_blank())+
-  theme(axis.title.y = element_blank())+
+      theme(axis.title.y = element_blank())+
        theme(axis.ticks.length = unit(0.3, "cm"))+
-       theme(title = element_text(size = 30))+
-   theme(panel.grid.minor = element_blank())+
+       theme(title = element_text(size = 25))+
+  theme(plot.title = element_text(hjust = 0.5))+
+      theme(panel.grid.minor = element_blank())+
        theme(legend.title = element_text(size = 25))+
        scale_color_brewer(palette="Set1")
 
@@ -242,7 +244,7 @@ figure_left_column <-
     RPMI_plot +
       theme(plot.margin = unit(c(0,0,0,0),"in")),
     ncol = 1,
-    labels = c("B")
+    labels = c("A")
   )
 
 figure_right_column <- 
@@ -250,14 +252,14 @@ figure_right_column <-
     YPD_plot  +
       theme(plot.margin = unit(c(0,0,0,0),"in")),
    ncol = 1,
-   labels = c("")
+   labels = c("B")
   )
 
 plot_grid(
   figure_left_column,
   figure_right_column,
   ncol = 2,
-  rel_widths = c(1,2))
+  rel_widths = c(3.5,4.8))
 
 
 
@@ -265,7 +267,7 @@ plot_grid(
 
 
 ```{r}
-ggsave(filename = "../results/fig4multipanel.png", width = 6, height = 6)
+ggsave(filename = "../results/fig4multipanel.png", width = 8, height = 4)
 ```
 
 
