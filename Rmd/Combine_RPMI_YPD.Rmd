@@ -1,5 +1,5 @@
 ---
-title: "RPMI_YPD comnbined PR analysis"
+title: "RPMI_YPD combined Plate Reader analysis"
 author: "Liz Hughes"
 date: "23/11/2022"
 output:
@@ -28,246 +28,340 @@ Seed at OD 600nm = 0.2 , 200 ul per well.
 Run for 3 days.
 
 ```{r load_packages}
-library("reshape2")
-library(dplyr)
-library(ggplot2)
 library(tidyverse)
-library(markdown)
+library(reshape2)
 library(cowplot)
+library(extrafont)
+
 ```
+
+```{r load_functions}
+read_platereader_csv <- function(file, ...) {
+  # read plate reader data in .csv format and convert time to hours, from seconds.
+  readr::read_csv(file = file, ...) %>%
+    dplyr::mutate(Time = Time/3600)
+}
+
+read_platemap_csv <- function(file, strain_df = NULL, ...) {
+  platemap <- readr::read_csv(file = file, ...)
+  if ( !is.null(strain_df) ) {
+    platemap <- platemap %>%
+      dplyr::left_join(strain_df, by = "Strain")
+  }
+  platemap
+}
+
+reshape_annotate_rawod <- function(rawod, platemap, 
+                                   od.name = "OD595", 
+                                   melt.id = "Time", 
+                                   well.name = "Well") {
+  rawod %>%
+    # Tidy the data using the melt function from reshape2
+    reshape2::melt(id = melt.id, 
+                   variable.name = well.name,
+                   value.name =  od.name) %>%
+    # Annotate by joining with the platemap
+    inner_join(platemap, by = well.name)
+}
+
+summarise_OD_fixed <- function(annotated_od, od.name = "OD595", ...) {
+  # summarise OD fixed value across many times
+  # here use `...` input to pass conditions to filter
+  # e.g. summarise_OD_fixed(annotated_od, od.name = "OD595", is.na(Strain))
+  annotated_od %>%
+    dplyr::filter(...) %>%
+    dplyr::summarise(OD_median = median(OD595),
+                     OD_mean   = mean(OD595),
+                     OD_max    = max(OD595),
+                     OD_min    = min(OD595),
+                     .groups = "keep")
+}
+
+summarise_OD_bytime <- function(annotated_od, od.name = "OD595", groups = "Time", ...) {
+  # summarise OD at each time
+  # here use `...` input to pass conditions to filter
+  # e.g. summarise_OD_bytime(annotated_od, od.name = "OD595", groups = "Time", is.na(Strain))
+  annotated_od %>%
+    dplyr::filter(...) %>%
+    dplyr::group_by(Time) %>%
+    dplyr::summarise(OD_median_time = median(OD595),
+                     OD_mean_time   = mean(OD595),
+                     OD_max_time    = max(OD595),
+                     OD_min_time    = min(OD595),
+                     .groups = "keep")
+}
+
+normalise_OD_2ways <- function(annotatedod, ...) {
+  # normalise OD across a plate
+  # will NOT work if there are multiple media in a plate; that would require an extra group_by or filtering internally.
+  # here use `...` input to pass conditions to filter
+  # e.g. normalise_OD(annotated_od, is.na(Strain))
+  # e.g. normalise_OD(annotated_od, Well %in% c("A1","A2","A3")) 
+  
+  normvalues_fixed <- 
+    summarise_OD_fixed(annotatedod, od.name = "OD595", ...)
+  normvalues_bytime <- 
+    summarise_OD_bytime(annotatedod, od.name = "OD595", groups = "Time", ...)
+  annotatedod %>%
+    mutate(OD_corrected_fixed = OD595 - normvalues_fixed$OD_median) %>%
+    left_join(normvalues_bytime, by = "Time") %>% 
+    mutate(OD_corrected_time = OD595 - OD_median_time) 
+}
+```
+
+```{r shared_formatting}
+theme_set(
+  theme_cowplot(font_size = 12, font_family = "Arial",
+                rel_large = 1) + 
+    theme(strip.background = element_blank(),
+          panel.border = 
+            element_rect(color = "grey90", 
+                         fill = NA, 
+                         linetype = 1, 
+                         size = 1),
+          panel.grid.major.y = 
+            element_line(size = 0.5, 
+                         colour = "grey90"))
+)
+
+scale_time_hrs <- 
+  scale_x_continuous(name = "Time (hours)", 
+                     breaks = c(0, 12, 24, 48, 72),
+                     limits = c(0, 72),
+                     expand = c(0, 0))
+```
+
+
+# Set up data frame of nice strain names, colours, styles.
+
+```{r nice_names}
+strain_df <- tibble( Strain = c("H99", "Gat201(B)", "Gat201(M)", "C26", "C30" ),
+                     Strain_nice = c("GAT201", "gat201∆b","gat201∆m", "GAT201-C1", "GAT201-C2"),
+                     colour = c("grey20", "magenta3", "darkred", "blue3", "cyan4"))
+
+scale_color_strain <- 
+  scale_color_manual("Strain",
+                     breaks = strain_df$Strain_nice,
+                     values = strain_df$colour)
+```
+
 
 
 # Read in transposed data as csv file RPMI
 
-```{r csv_file}
 
-rawdata <- read.csv("../Input/20200728_EH_PR2_RPMI_WT_Gat201TRSP.csv")
-
-```
-
-# Change time in seconds to time in hours RPMI
-
-```{r mutate_time}
-
- rawdata_hrs<-mutate(rawdata, Time = Time/86400)
-
-```
-
-# Tidy the data using the melt function from reshape2 RPMI
-
-```{r reshape}
-reshaped <- melt(rawdata_hrs, id=c("Time", "Temp"), 
-                              variable.name="Well",
-                              value.name="OD595")
-
-summary(reshaped)
+```{r load_rawod_RPMI}
+rawod_RPMI <- 
+  read_platereader_csv("../Input/20200728_EH_PR2_RPMI_WT_Gat201TRSP.csv")
 ```
 
 # Read in the Plate map data from csv file RPMI
 
-```{r Load_platemap}
+Also combine with nice strain names for display.
 
-platemap <- read.csv("../Input/20200728-PR2_SetupCSV.csv")
-head(platemap, n=10)
+```{r load_platemap_RPMI}
+platemap_RPMI <- 
+  read_platemap_csv("../Input/20200728-PR2_SetupCSV.csv",
+                    strain_df = strain_df) 
 
+head(platemap_RPMI, n=10)
 
 ```
 
-# Combine the reshaped data with the plate map, pairing them by Well RPMI
+# Reshape data and combine with the plate map, pairing them by Well RPMI
 
-```{r join}
+```{r reshape_annotate_RPMI}
+annotated_RPMI <- 
+  reshape_annotate_rawod(rawod = rawod_RPMI, platemap = platemap_RPMI)
+```
 
-annotated <- inner_join(reshaped, platemap, by="Well")
- 
+## Plot blank ODs RPMI
+
+To find how stable the ODs of the blank wells are.
+
+```{r plot_blank_ODs_RPMI, fig.width = 5, fig.height = 4}
+ggplot(data=filter(annotated_RPMI, is.na(Strain)),
+       aes(x=Time, y=OD595,  group = Well)) + 
+  geom_line() + 
+  scale_time_hrs + 
+  scale_y_continuous(limits = c(0, 0.2),
+                     expand = c(0, 0),
+                     breaks = c(0, 0.05, 0.1, 0.15)) +
+  labs(title = "Blank wells RPMI", x="Time (hours)", y="Absorbance at 595 nm")
 ```
 
 ## Calculate median OD for blank wells for each growth medium RPMI
+
 Remove well H2
 
-```{r calc_blank_medians}
-blank_OD_summary <- annotated %>%
-  filter(Strain=="") %>%
-  filter(Well != "H2") %>%
-  # filter out columns 1 and 12 as well?
-  group_by(Medium) %>%
-  summarise(OD_median=median(OD595),
-            OD_mean=mean(OD595),
-            OD_max=max(OD595),
-            OD_min=min(OD595))
-print(blank_OD_summary)
+```{r calc_blank_medians_RPMI}
+# filter out columns 1 and 12 as well?
+blank_OD_summary_RPMI <- 
+  summarise_OD_fixed(annotated_RPMI, od.name = "OD595",
+                     is.na(Strain),
+                     Well != "H2") 
+
+print(blank_OD_summary_RPMI)
+
+blank_OD_time_RPMI <- 
+  summarise_OD_bytime(annotated_RPMI, od.name = "OD595",
+                     is.na(Strain),
+                     Well != "H2") 
+
+print(blank_OD_time_RPMI)
 ```
 
 # Subtract blank OD to make corrected OD and Plot OD_corrected v Time (hrs) RPMI
 
-```{r subtract_blank_OD}
-
-normalisedOD <- annotated %>%
-  left_join(blank_OD_summary, by="Medium") %>%
-  mutate(OD_corrected = OD595 - OD_median)
-
+```{r subtract_blank_OD_RPMI}
+normalisedOD_RPMI <- 
+  normalise_OD_2ways(annotated_RPMI, is.na(Strain))
 ```
 
 ## Plot OD all stat_summary(geom -"line") Highlight summary line RPMI
 
-```{r plot_all_stat_summary}
-RPMI_plot <- ggplot(data=normalisedOD %>%
-                     filter(Strain != ""), 
-                      aes(x=Time, y=OD_corrected, color=Strain)) + 
-       geom_line(aes(group = Well), size = 0.2, alpha = 0.2) + 
-       stat_summary(fun = "median", geom = "line", size = 1) +
-       scale_y_continuous(limits=c(0,0.9),expand=c(0,0), breaks = c(0,  0.25,0.5, 0.75)) +
-  
-       labs(y = "Absorbance (595nm)",
-            title = "RPMI") +
-       theme_bw() +
-  theme(axis.title.x = element_blank())+
-       theme(text = element_text(size = 15))+
-       theme(axis.title = element_text(size = 25)) +
-  theme(axis.ticks.length = unit(0.3, "cm"))+
-       theme(title = element_text(size = 25))+
-  theme(plot.title = element_text(hjust = 0.5))+
-       theme(legend.title = element_blank())+
-  theme(legend.position="none")+
-  theme(panel.grid.minor = element_blank())+
-       scale_color_brewer(palette="Set1")
+```{r plot_all_stat_summary_RPMI, fig.width = 5, fig.height = 4}
+RPMI_plot <- ggplot(data = normalisedOD_RPMI %>%
+                      filter(!is.na(Strain)), 
+                    aes(x = Time, y = OD_corrected_time, color = Strain_nice)) + 
+  geom_line(aes(group = Well), size = 0.2, alpha = 0.2) + 
+  stat_summary(fun = "median", geom = "line", size = 1) +
+  scale_time_hrs + 
+  # scale_y_continuous(limits = c(0, 0.9), 
+  #                    expand = c(0, 0), 
+  #                    breaks = c(0, 0.25, 0.5, 0.75)) +
+  scale_y_continuous(limits = c(0, 0.1),
+                     expand = c(0, 0),
+                     breaks = c(0, 0.05, 0.1)) +
+  labs(y = "OD595",
+       title = "RPMI") +
+  scale_color_strain
 
 RPMI_plot
 ```
 
 
-```{r save_RMPI.png}
-
-ggsave("../Results/RMPI.png",width = 5.1,height=5)
+```{r save_png_RPMI}
+ggsave("../Results/20200728_EH_PR2_RPMI_WT_Gat201TRSP_summaryplot.png",
+       width = 5.1, height = 5)
 ```
+
 
 # Read in transposed data as csv file YPD
 
-```{r y_csv_file }
-y_rawdata <- read.csv("../Input/20200807_EH_PR4_YPD_WTGat201_TRSP.csv")
 
+```{r load_rawod_YPD}
+rawod_YPD <- 
+  read_platereader_csv("../Input/20200807_EH_PR4_YPD_WTGat201_TRSP.csv")
 ```
-
-# Change time in seconds to time in days YPD
-
-```{r y_mutate_time}
-
- y_rawdata_hrs<-mutate(y_rawdata, Time = Time/86400)
-```
-
-# Tidy the data using the melt function from reshape2 YPD
-
-```{r y_reshape}
-
-y_reshaped <- melt(y_rawdata_hrs, id=c("Time", "Temp"), variable.name="Well",
-                 value.name="OD595")
-summary(y_reshaped)
-```
-
 
 # Read in the Plate map data from csv file YPD
 
-```{r y_Load_platemap}
-y_platemap <- read.csv("../Input/20200807-PR4_SetupCSV.csv")
-head(y_platemap, n=10)
+Also combine with nice strain names for display.
+
+```{r load_platemap_YPD}
+platemap_YPD <- 
+  read_platemap_csv("../Input/20200807-PR4_SetupCSV.csv",
+                    strain_df = strain_df) 
+
+head(platemap_YPD, n=10)
 
 ```
 
-# Combine the reshaped data with the plate map, pairing them by Well YPD
+# Reshape data and combine with the plate map, pairing them by Well YPD
 
-```{r y_join}
-y_annotated <- inner_join(y_reshaped, y_platemap, by="Well")
-
+```{r reshape_annotate_YPD}
+annotated_YPD <- 
+  reshape_annotate_rawod(rawod = rawod_YPD, platemap = platemap_YPD)
 ```
 
-## Calculate median OD for blank wells YPD
-Remove A1
+## Plot blank ODs YPD
 
-```{r y_calc_blank_medians}
-y_blank_OD_summary <- y_annotated %>%
-  filter(Strain=="") %>%
-  group_by(Medium) %>%
-  summarise(OD_median=median(OD595),
-            OD_mean=mean(OD595),
-            OD_max=max(OD595),
-            OD_min=min(OD595))
-print(y_blank_OD_summary)
+To find how stable the ODs of the blank wells are.
+
+```{r plot_blank_ODs_YPD, fig.width = 5, fig.height = 3.5}
+ggplot(data=filter(annotated_YPD, is.na(Strain)),
+           aes(x=Time, y=OD595,  group = Well)) + 
+  geom_line() + 
+  scale_time_hrs + 
+  scale_y_continuous(limits = c(0, 0.2),
+                     expand = c(0, 0),
+                     breaks = c(0, 0.05, 0.1, 0.15)) +
+  labs(title = "Blank wells YPD", x="Time (hours)", y="Absorbance at 595 nm")
 ```
 
-# Subtract blank OD to make corrected OD YPD
+## Calculate median OD for blank wells for each growth medium YPD
 
-```{r y_subtract_blank_OD}
+```{r calc_blank_medians_YPD}
+# filter out columns 1 and 12 as well?
+blank_OD_summary_YPD <- 
+  summarise_OD_fixed(annotated_YPD, od.name = "OD595",
+                     is.na(Strain)) 
 
-y_normalisedOD <- y_annotated %>%
-  left_join(y_blank_OD_summary, by="Medium") %>%
-  mutate(y_OD_corrected = OD595 - OD_median)
+print(blank_OD_summary_YPD)
 
+blank_OD_time_YPD <- 
+  summarise_OD_bytime(annotated_YPD, od.name = "OD595",
+                     is.na(Strain)) 
+
+print(blank_OD_time_YPD)
 ```
 
-## Plot OD all stat_summary(geom -"line")
+# Subtract blank OD to make corrected OD and Plot OD_corrected v Time (hrs) YPD
 
-```{r y_plot_all_stat_summary}
+```{r subtract_blank_OD_YPD}
+normalisedOD_YPD <- 
+  normalise_OD_2ways(annotated_YPD, is.na(Strain))
+```
 
-YPD_plot <- ggplot(data=y_normalisedOD %>%
-                     filter(Strain != ""), 
-                      aes(x=Time, y=y_OD_corrected, color=Strain)) + 
-       geom_line(aes(group = Well), size = 0.2, alpha = 0.2) + 
-       stat_summary(fun = "median", geom = "line", size = 1) +
-       scale_y_continuous(limits=c(0,0.9),expand=c(0,0)) +
-      
-       labs(
-         title = "YPD") +
-       theme_bw() +
-       theme(text = element_text(size = 15))+
-       theme(axis.title.x = element_blank())+
-      theme(axis.title.y = element_blank())+
-       theme(axis.ticks.length = unit(0.3, "cm"))+
-       theme(title = element_text(size = 25))+
-  theme(plot.title = element_text(hjust = 0.5))+
-      theme(panel.grid.minor = element_blank())+
-       theme(legend.title = element_text(size = 25))+
-       scale_color_brewer(palette="Set1")
+## Plot OD all stat_summary(geom -"line") Highlight summary line YPD
+
+```{r plot_all_stat_summary_YPD, fig.width = 5, fig.height = 3.5}
+YPD_plot <- ggplot(data = normalisedOD_YPD %>%
+                      filter(!is.na(Strain)), 
+                    aes(x = Time, y = OD_corrected_time, color = Strain_nice)) + 
+  geom_line(aes(group = Well), size = 0.2, alpha = 0.2) + 
+  stat_summary(fun = "median", geom = "line", size = 1) +
+  scale_time_hrs + 
+  scale_y_continuous(limits = c(0, 0.9),
+                     expand = c(0, 0),
+                     breaks = c(0, 0.1, 0.25, 0.5, 0.75)) +
+  # scale_y_continuous(limits = c(0, 0.1),
+  #                    expand = c(0, 0),
+  #                    breaks = c(0, 0.05, 0.1)) +
+  labs(y = "OD595",
+       title = "YPD") +
+  scale_color_strain
 
 YPD_plot
 ```
 
-```{r save_YPD.png}
 
-ggsave("../Results/YPD.png",width = 6.6,height=5)
+```{r save_png_YPD}
+ggsave("../Results/20200807_EH_PR4_YPD_WTGat201_TRSP_summaryplot.png",
+       width = 5.1, height = 5)
 ```
+
+
 
 # Draft Multipanel Figure
 
-```{r multifig}
-
-figure_left_column <- 
-    plot_grid(
-    RPMI_plot +
-      theme(plot.margin = unit(c(0,0,0,0),"in")),
-    ncol = 1,
-    labels = c("A")
-  )
-
-figure_right_column <- 
-  plot_grid(
-    YPD_plot  +
-      theme(plot.margin = unit(c(0,0,0,0),"in")),
-   ncol = 1,
-   labels = c("B")
-  )
+```{r multifig, fig.height = 4, fig.width = 3.75}
 
 plot_grid(
-  figure_left_column,
-  figure_right_column,
-  ncol = 2,
-  rel_widths = c(3.5,4.8))
-
-
+  RPMI_plot,
+  YPD_plot,
+  ncol = 1)
 
 ```
 
 
-```{r}
-ggsave(filename = "../results/fig4multipanel.png", width = 8, height = 4)
+```{r save_png}
+ggsave(filename = "../results/fig_platereader.png", width = 3.75, height = 4)
+```
+
+```{r save_svg}
+ggsave(filename = "../results/fig_platereader.svg", width = 3.75, height = 4)
 ```
 
 
